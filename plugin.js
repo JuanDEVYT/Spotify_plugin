@@ -11,7 +11,7 @@ const TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&pr
 const ANON_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ORIGIN = "https://open.spotify.com";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
-const VERSION = "0.1.5";
+const VERSION = "0.1.6";
 
 // ---------------------------------------------------------------------------------------------
 // Token de acceso (derivado de la cookie sp_dc, caduca ~1 hora)
@@ -57,10 +57,25 @@ async function fetchToken(spDc) {
     cookies: false,  // nunca pasar el jar de Kino; Spotify rechaza cookies extrañas
     timeoutMs: 10000
   });
-  if (!r.ok) return null;
+  if (!r.ok) {
+    if (spDc) {
+      // Cookie inválida o expirada — limpiarla para no seguir reintentando
+      try { kino.config.set("sp_dc", ""); } catch (e) {}
+      try { kino.storage.remove("sp_token"); } catch (e) {}
+      kino.log("sp_dc inválida o expirada, sesión cerrada automáticamente");
+    }
+    return null;
+  }
   const d = r.json();
   const token = d.accessToken;
-  if (!token) return null;
+  if (!token || d.isAnonymous) {
+    if (spDc) {
+      try { kino.config.set("sp_dc", ""); } catch (e) {}
+      try { kino.storage.remove("sp_token"); } catch (e) {}
+      kino.log("sp_dc no tiene sesión activa, sesión cerrada automáticamente");
+    }
+    return null;
+  }
   const exp = d.accessTokenExpirationTimestampMs || (Date.now() + 3600000);
   try {
     kino.storage.set(cacheKey, JSON.stringify({ token, exp }), { ttlMs: Math.max(60000, exp - Date.now() - 30000) });
