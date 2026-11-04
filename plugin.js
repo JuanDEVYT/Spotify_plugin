@@ -574,9 +574,30 @@ async function accountDisplayName() {
 
 export async function settingsStatus() {
   if (!savedSpDc()) return { linked: "Sin sesión: usas Spotify como invitado" };
+  // Flush cached token to force a fresh check with the stored cookie
+  try { kino.storage.remove("sp_token"); } catch (e) {}
+  // First verify the cookie actually yields a non-anonymous token
+  const spDc = savedSpDc();
+  try {
+    const r = await kino.fetch(TOKEN_URL, {
+      headers: { "User-Agent": WEB_UA, Cookie: "sp_dc=" + spDc, Referer: ORIGIN + "/", Origin: ORIGIN },
+      cookies: false,
+      timeoutMs: 10000
+    });
+    if (!r.ok) return { linked: "No se pudo verificar la sesión (error de red)" };
+    const d = r.json();
+    if (!d.accessToken || d.isAnonymous) {
+      return { linked: "Cookie sp_dc expirada o inválida. Cópiala de nuevo desde open.spotify.com" };
+    }
+    // Token OK — cache it and get the display name
+    const exp = d.accessTokenExpirationTimestampMs || (Date.now() + 3600000);
+    try { kino.storage.set("sp_token", JSON.stringify({ token: d.accessToken, exp }), { ttlMs: Math.max(60000, exp - Date.now() - 30000) }); } catch (e) {}
+  } catch (e) {
+    return { linked: "No se pudo comprobar la sesión ahora" };
+  }
   try {
     const name = await accountDisplayName();
-    return { linked: name ? "Sesión iniciada como " + name : "Spotify no reconoce esta sesión: copia la cookie sp_dc otra vez" };
+    return { linked: name ? "Sesión iniciada como " + name : "Sesión activa (sin nombre de usuario)" };
   } catch (e) {
     return { linked: "No se pudo comprobar la sesión ahora" };
   }
@@ -604,7 +625,7 @@ export async function validateSettings(values) {
   });
   if (!r.ok) return { sp_dc: "Spotify rechazó esta cookie. Cópiala de nuevo." };
   const d = r.json();
-  if (!d.accessToken || d.isAnonymous) return { sp_dc: "Esta cookie no tiene sesión. Asegúrate de haber iniciado sesión en open.spotify.com." };
+  if (!d.accessToken || d.isAnonymous) return { sp_dc: "Esta cookie no tiene sesión activa. Inicia sesión en open.spotify.com, copia la cookie sp_dc y pégala aquí." };
   return null;
 }
 
