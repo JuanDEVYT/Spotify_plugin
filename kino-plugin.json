@@ -1,7 +1,7 @@
 {
   "id": "spotify",
   "name": "Spotify",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "apiVersion": 8,
   "entry": "plugin.js",
   "description": "Spotify con carruseles, búsqueda, Playlist IA y biblioteca personal.",
@@ -94,7 +94,10 @@
         "labelEn": "Spotify",
         "icon": "music",
         "menuOpens": "both",
-        "opensFrom": ["menu", "settings"],
+        "opensFrom": [
+          "menu",
+          "settings"
+        ],
         "settingsButton": {
           "label": "Abrir Spotify",
           "labelEn": "Open Spotify"
