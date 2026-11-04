@@ -11,7 +11,7 @@ const TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&pr
 const ANON_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ORIGIN = "https://open.spotify.com";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
-const VERSION = "0.1.4";
+const VERSION = "0.1.5";
 
 // ---------------------------------------------------------------------------------------------
 // Token de acceso (derivado de la cookie sp_dc, caduca ~1 hora)
@@ -70,13 +70,8 @@ async function fetchToken(spDc) {
 
 async function getAccessToken() {
   const spDc = savedSpDc();
-  // Intentar con cuenta (sp_dc) primero; si falla o no hay, obtener token anónimo
-  if (spDc) {
-    const t = await fetchToken(spDc);
-    if (t) return t;
-  }
-  // Token anónimo (Spotify lo entrega sin cookie; es limitado pero suficiente para catálogo público)
-  return fetchToken(null);
+  if (!spDc) return null; // Sin sp_dc no hay token válido — Spotify requiere auth para todo
+  return fetchToken(spDc);
 }
 
 async function authHeaders() {
@@ -96,9 +91,11 @@ function locale() {
 
 async function sp(path, opts) {
   const o = opts || {};
+  const token = await getAccessToken();
+  if (!token) throw kino.error("auth_required", "spotify no token: " + path);
   const headers = Object.assign(
     { "User-Agent": WEB_UA, Accept: "application/json" },
-    await authHeaders()
+    { Authorization: "Bearer " + token }
   );
   const sep = path.includes("?") ? "&" : "?";
   const { country } = locale();
@@ -276,7 +273,7 @@ async function featuredRows() {
 
   // Géneros vía search (funciona con cualquier token autenticado)
   for (const g of genres) {
-    const data = await safe("categories", () => sp(
+    const data = await safe("genre_" + g.id, () => sp(
       "search?q=" + encodeURIComponent(g.q) + "&type=track&limit=20&market=" + country, { noMarket: true }
     ), null);
     if (data && data.tracks) {
@@ -311,9 +308,9 @@ async function libraryRows() {
 }
 
 export async function home() {
-  const deadline = Date.now() + 14000;
+  if (!savedSpDc()) return [];
   const [lib, main] = await Promise.all([
-    savedSpDc() ? safe("lib", libraryRows, []) : Promise.resolve([]),
+    safe("lib", libraryRows, []),
     safe("featured", featuredRows, [])
   ]);
   return lib.concat(main).slice(0, 20);
@@ -354,6 +351,7 @@ export async function section(arg) {
   let rows = [];
 
   if (tab === TAB_HOME || tab === TAB_EXPLORE) {
+    if (!savedSpDc()) return { tabs, tab, rows: [], hero: null, _noAuth: true };
     rows = await safe("featured_rows", featuredRows, []);
   } else if (tab === TAB_CHARTS) {
     // Playlist "Global Top 50" de Spotify
@@ -1122,8 +1120,13 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
     s.linkedNow = false;
     await checkSession(s);
     try {
+      if (!savedSpDc()) {
+        s.rails = []; s.heroItem = null; s.trendingLoaded = true; s.railsAuth = false;
+        s.libraryItems = []; s.libraryLoaded = true;
+        return { state: s };
+      }
       const rows = await safe("featured_rows", featuredRows, []);
-      const libRows = savedSpDc() ? await safe("lib", libraryRows, []) : [];
+      const libRows = await safe("lib", libraryRows, []);
       const all = [...libRows, ...rows];
       const rails = [];
       const seenTitles = new Set();
