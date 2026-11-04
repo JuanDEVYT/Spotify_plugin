@@ -1116,6 +1116,7 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
   const s = Object.assign({}, state || {});
 
   if (name === "open" || name === "refresh_screen" || name === "account_linked") {
+    if (name === "open") kino.log("Spotify v" + VERSION + " · Creado por JuandreXter");
     s.sessionOff = false;
     s.linkedNow = false;
     await checkSession(s);
