@@ -11,7 +11,7 @@ const TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&pr
 const ANON_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ORIGIN = "https://open.spotify.com";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
-const VERSION = "0.1.1";
+const VERSION = "0.1.3";
 
 // ---------------------------------------------------------------------------------------------
 // Token de acceso (derivado de la cookie sp_dc, caduca ~1 hora)
@@ -20,11 +20,13 @@ const VERSION = "0.1.1";
 function savedSpDc() {
   const raw = String(kino.config.get("sp_dc") || "").trim();
   if (!raw) return "";
-  // Si Kino guardó el header completo ("sp_dc=VALOR" o "Cookie: sp_dc=VALOR"), extraer solo el valor
-  const m = /(?:^|[;\s])sp_dc=([^;\s]+)/.exec(raw);
-  if (m) return m[1];
-  // Si es solo el valor crudo (manual), devolverlo tal cual
-  return raw.includes("=") ? "" : raw;
+  // Handle "Cookie: sp_dc=VALUE" or "sp_dc=VALUE" formats (visualBrowser header format)
+  const mHeader = /(?:^|[;\s])sp_dc=([^;\s]+)/.exec(raw);
+  if (mHeader) return mHeader[1];
+  // Handle raw value (manual paste or format: "value")
+  // A raw sp_dc value never contains "=" at the start and is typically 100-200 chars
+  if (!raw.includes("=") || raw.length > 50) return raw.split("=").pop().trim();
+  return "";
 }
 
 function sessionActive(s) {
@@ -1170,7 +1172,7 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
       doneWhen: { cookies: ["sp_dc"] },
       collect: {
         cookies: ["sp_dc"],
-        storeAs: { setting: "sp_dc", format: "header", thenEvent: "account_linked" }
+        storeAs: { setting: "sp_dc", format: "value", thenEvent: "account_linked" }
       },
       timeoutMs: 600000
     });
