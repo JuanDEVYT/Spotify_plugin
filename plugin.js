@@ -11,7 +11,7 @@ const TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&pr
 const ANON_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ORIGIN = "https://open.spotify.com";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
-const VERSION = "0.1.7";
+const VERSION = "0.1.8-debug";
 
 // Flag en memoria: evita que requests paralelos intenten fetchToken() cuando ya sabemos que falla
 let _tokenFailed = false;
@@ -25,12 +25,28 @@ const TOKEN_FAIL_TTL = 30000; // 30s de cooldown antes de reintentar
 function savedSpDc() {
   const raw = String(kino.config.get("sp_dc") || "").trim();
   if (!raw) return "";
-  // format:"header" stores "sp_dc=VALUE" or "Cookie: sp_dc=VALUE; ..."
-  // Try to extract the value part
-  const mEq = /(?:^|[;\s])sp_dc=([^;\s]+)/.exec(raw);
-  if (mEq) return mEq[1];
-  // Manual paste: raw value with no "=" (pure token string)
-  if (!raw.includes("=")) return raw;
+  // Log raw para debug (primeros 60 chars)
+  kino.log("sp_dc raw (60):", JSON.stringify(raw.slice(0, 60)));
+  // format:"header" puede guardar múltiples formatos:
+  // 1. "AQD3abc..."           → valor crudo (pegado manual)
+  // 2. "sp_dc=AQD3abc..."     → nombre=valor
+  // 3. "sp_dc=AQD3abc; sp_key=..." → header completo con múltiples cookies
+  // 4. "Cookie: sp_dc=AQD3abc..." → header HTTP completo
+  // 5. "sp_dc=AQD3abc%3D..." → valor URL-encoded
+  const mEq = /(?:^|[;,\s])sp_dc=([^;,\s]+)/.exec(raw);
+  if (mEq) {
+    let val = mEq[1];
+    // Decodificar si está URL-encoded
+    try { if (val.includes("%")) val = decodeURIComponent(val); } catch(e) {}
+    kino.log("sp_dc extraído:", val.slice(0, 20) + "...");
+    return val;
+  }
+  // Sin "=" → es el valor crudo directamente
+  if (!raw.includes("=")) {
+    kino.log("sp_dc crudo:", raw.slice(0, 20) + "...");
+    return raw;
+  }
+  kino.log("sp_dc: no se pudo extraer el valor del raw");
   return "";
 }
 
@@ -65,6 +81,7 @@ async function fetchToken(spDc) {
     Cookie: "sp_dc=" + spDc
   };
 
+  kino.log("fetchToken: enviando Cookie sp_dc=" + spDc.slice(0, 20) + "... len=" + spDc.length);
   let r;
   try {
     r = await kino.fetch(TOKEN_URL, { headers, cookies: false, timeoutMs: 10000 });
@@ -74,6 +91,7 @@ async function fetchToken(spDc) {
     return null;
   }
 
+  kino.log("fetchToken: HTTP " + r.status);
   if (!r.ok) {
     kino.log("sp_dc inválida o expirada (HTTP " + r.status + "), cerrando sesión");
     _tokenFailed = true; _tokenFailedAt = Date.now();
@@ -1235,6 +1253,12 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
       },
       timeoutMs: 600000
     });
+    kino.log("visualBrowser result:", JSON.stringify({ status: r.status, stored: r.stored, keys: r.stored ? Object.keys(r) : [] }));
+    if (r.stored) {
+      // Leer lo que se guardó para diagnóstico
+      const savedRaw = String(kino.config.get("sp_dc") || "").trim();
+      kino.log("sp_dc guardado por visualBrowser (80):", JSON.stringify(savedRaw.slice(0, 80)));
+    }
     if (r.status === "done" && r.stored) return { state: Object.assign({}, s, { linkedNow: true, sessionOff: false }), toast: "Cuenta vinculada" };
     return { state: s, toast: r.status === "closed" ? "No se vinculó la cuenta" : "No se pudo vincular la cuenta" };
   }
