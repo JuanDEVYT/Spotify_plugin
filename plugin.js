@@ -11,7 +11,12 @@ const TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&pr
 const ANON_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ORIGIN = "https://open.spotify.com";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
-const VERSION = "0.1.6";
+const VERSION = "0.1.7";
+
+// Flag en memoria: evita que requests paralelos intenten fetchToken() cuando ya sabemos que falla
+let _tokenFailed = false;
+let _tokenFailedAt = 0;
+const TOKEN_FAIL_TTL = 30000; // 30s de cooldown antes de reintentar
 
 // ---------------------------------------------------------------------------------------------
 // Token de acceso (derivado de la cookie sp_dc, caduca ~1 hora)
@@ -35,12 +40,20 @@ function sessionActive(s) {
 }
 
 async function fetchToken(spDc) {
-  const cacheKey = spDc ? "sp_token" : "sp_anon_token";
+  if (!spDc) return null;
+
+  // Si ya sabemos que falló recientemente, no reintentar (evita race conditions)
+  if (_tokenFailed && Date.now() - _tokenFailedAt < TOKEN_FAIL_TTL) return null;
+
+  // Revisar cache
   try {
-    const cached = kino.storage.get(cacheKey);
+    const cached = kino.storage.get("sp_token");
     if (cached) {
       const e = JSON.parse(cached);
-      if (e && e.token && e.exp && e.exp - Date.now() > 60000) return e.token;
+      if (e && e.token && e.exp && e.exp - Date.now() > 60000) {
+        _tokenFailed = false;
+        return e.token;
+      }
     }
   } catch (err) {}
 
@@ -48,44 +61,50 @@ async function fetchToken(spDc) {
     "User-Agent": WEB_UA,
     Referer: ORIGIN + "/",
     Origin: ORIGIN,
-    Accept: "application/json"
+    Accept: "application/json",
+    Cookie: "sp_dc=" + spDc
   };
-  if (spDc) headers["Cookie"] = "sp_dc=" + spDc;
 
-  const r = await kino.fetch(TOKEN_URL, {
-    headers,
-    cookies: false,  // nunca pasar el jar de Kino; Spotify rechaza cookies extrañas
-    timeoutMs: 10000
-  });
+  let r;
+  try {
+    r = await kino.fetch(TOKEN_URL, { headers, cookies: false, timeoutMs: 10000 });
+  } catch (e) {
+    kino.log("sp_dc: error de red al obtener token:", e && e.message || "timeout");
+    _tokenFailed = true; _tokenFailedAt = Date.now();
+    return null;
+  }
+
   if (!r.ok) {
-    if (spDc) {
-      // Cookie inválida o expirada — limpiarla para no seguir reintentando
-      try { kino.config.set("sp_dc", ""); } catch (e) {}
-      try { kino.storage.remove("sp_token"); } catch (e) {}
-      kino.log("sp_dc inválida o expirada, sesión cerrada automáticamente");
-    }
+    kino.log("sp_dc inválida o expirada (HTTP " + r.status + "), cerrando sesión");
+    _tokenFailed = true; _tokenFailedAt = Date.now();
+    try { kino.config.set("sp_dc", ""); } catch (e) {}
+    try { kino.storage.remove("sp_token"); } catch (e) {}
     return null;
   }
+
   const d = r.json();
-  const token = d.accessToken;
-  if (!token || d.isAnonymous) {
-    if (spDc) {
-      try { kino.config.set("sp_dc", ""); } catch (e) {}
-      try { kino.storage.remove("sp_token"); } catch (e) {}
-      kino.log("sp_dc no tiene sesión activa, sesión cerrada automáticamente");
-    }
+  if (!d.accessToken || d.isAnonymous) {
+    kino.log("sp_dc sin sesión activa, cerrando sesión");
+    _tokenFailed = true; _tokenFailedAt = Date.now();
+    try { kino.config.set("sp_dc", ""); } catch (e) {}
+    try { kino.storage.remove("sp_token"); } catch (e) {}
     return null;
   }
+
+  // Token válido
+  _tokenFailed = false;
   const exp = d.accessTokenExpirationTimestampMs || (Date.now() + 3600000);
   try {
-    kino.storage.set(cacheKey, JSON.stringify({ token, exp }), { ttlMs: Math.max(60000, exp - Date.now() - 30000) });
+    kino.storage.set("sp_token", JSON.stringify({ token: d.accessToken, exp }),
+      { ttlMs: Math.max(60000, exp - Date.now() - 30000) });
   } catch (e) {}
-  return token;
+  return d.accessToken;
 }
 
 async function getAccessToken() {
+  if (_tokenFailed && Date.now() - _tokenFailedAt < TOKEN_FAIL_TTL) return null;
   const spDc = savedSpDc();
-  if (!spDc) return null; // Sin sp_dc no hay token válido — Spotify requiere auth para todo
+  if (!spDc) return null;
   return fetchToken(spDc);
 }
 
@@ -619,33 +638,21 @@ async function accountDisplayName() {
 }
 
 export async function settingsStatus() {
-  if (!savedSpDc()) return { linked: "Sin sesión: usas Spotify como invitado" };
-  // Flush cached token to force a fresh check with the stored cookie
-  try { kino.storage.remove("sp_token"); } catch (e) {}
-  // First verify the cookie actually yields a non-anonymous token
   const spDc = savedSpDc();
-  try {
-    const r = await kino.fetch(TOKEN_URL, {
-      headers: { "User-Agent": WEB_UA, Cookie: "sp_dc=" + spDc, Referer: ORIGIN + "/", Origin: ORIGIN },
-      cookies: false,
-      timeoutMs: 10000
-    });
-    if (!r.ok) return { linked: "No se pudo verificar la sesión (error de red)" };
-    const d = r.json();
-    if (!d.accessToken || d.isAnonymous) {
-      return { linked: "Cookie sp_dc expirada o inválida. Cópiala de nuevo desde open.spotify.com" };
-    }
-    // Token OK — cache it and get the display name
-    const exp = d.accessTokenExpirationTimestampMs || (Date.now() + 3600000);
-    try { kino.storage.set("sp_token", JSON.stringify({ token: d.accessToken, exp }), { ttlMs: Math.max(60000, exp - Date.now() - 30000) }); } catch (e) {}
-  } catch (e) {
-    return { linked: "No se pudo comprobar la sesión ahora" };
+  if (!spDc) return { linked: "Sin sesión: usas Spotify como invitado con contenido limitado" };
+  // Forzar renovación (ignorar cache) para mostrar estado real
+  try { kino.storage.remove("sp_token"); } catch (e) {}
+  _tokenFailed = false;
+  const token = await fetchToken(spDc);
+  if (!token) {
+    // fetchToken ya limpió sp_dc y logueó el motivo
+    return { linked: "Cookie sp_dc expirada o inválida — vincula tu cuenta de nuevo" };
   }
   try {
     const name = await accountDisplayName();
-    return { linked: name ? "Sesión iniciada como " + name : "Sesión activa (sin nombre de usuario)" };
+    return { linked: name ? "Sesión activa como " + name : "Sesión activa" };
   } catch (e) {
-    return { linked: "No se pudo comprobar la sesión ahora" };
+    return { linked: "Sesión activa (no se pudo obtener el nombre)" };
   }
 }
 
@@ -1132,6 +1139,7 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
 
   if (name === "open" || name === "refresh_screen" || name === "account_linked") {
     if (name === "open") kino.log("Spotify v" + VERSION + " · Creado por JuandreXter");
+    if (name === "account_linked") { _tokenFailed = false; _tokenFailedAt = 0; try { kino.storage.remove("sp_token"); } catch(e) {} }
     s.sessionOff = false;
     s.linkedNow = false;
     await checkSession(s);
@@ -1205,6 +1213,7 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
     if (!raw) return { toast: "Pega tu cookie sp_dc antes de vincular" };
     if (raw.length < 20) return { toast: "El valor no parece una cookie sp_dc válida" };
     // Forzar renovación del token con la cookie nueva
+    _tokenFailed = false; _tokenFailedAt = 0;
     try { kino.storage.remove("sp_token"); } catch (e) {}
     s.tab = "library";
     s.libraryLoaded = false;
