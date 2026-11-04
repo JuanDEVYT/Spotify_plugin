@@ -8,16 +8,23 @@
 
 const API = "https://api.spotify.com/v1/";
 const TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
+const ANON_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ORIGIN = "https://open.spotify.com";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 // ---------------------------------------------------------------------------------------------
 // Token de acceso (derivado de la cookie sp_dc, caduca ~1 hora)
 // ---------------------------------------------------------------------------------------------
 
 function savedSpDc() {
-  return String(kino.config.get("sp_dc") || "").trim();
+  const raw = String(kino.config.get("sp_dc") || "").trim();
+  if (!raw) return "";
+  // Si Kino guardó el header completo ("sp_dc=VALOR" o "Cookie: sp_dc=VALOR"), extraer solo el valor
+  const m = /(?:^|[;\s])sp_dc=([^;\s]+)/.exec(raw);
+  if (m) return m[1];
+  // Si es solo el valor crudo (manual), devolverlo tal cual
+  return raw.includes("=") ? "" : raw;
 }
 
 function sessionActive(s) {
@@ -25,39 +32,49 @@ function sessionActive(s) {
   return !!savedSpDc() || (s && s.linkedNow === true);
 }
 
-async function getAccessToken() {
-  const spDc = savedSpDc();
-  if (!spDc) return null;
-
-  // Caché en kino.storage
+async function fetchToken(spDc) {
+  const cacheKey = spDc ? "sp_token" : "sp_anon_token";
   try {
-    const cached = kino.storage.get("sp_token");
+    const cached = kino.storage.get(cacheKey);
     if (cached) {
       const e = JSON.parse(cached);
       if (e && e.token && e.exp && e.exp - Date.now() > 60000) return e.token;
     }
   } catch (err) {}
 
+  const headers = {
+    "User-Agent": WEB_UA,
+    Referer: ORIGIN + "/",
+    Origin: ORIGIN,
+    Accept: "application/json"
+  };
+  if (spDc) headers["Cookie"] = "sp_dc=" + spDc;
+
   const r = await kino.fetch(TOKEN_URL, {
-    headers: {
-      "User-Agent": WEB_UA,
-      Cookie: "sp_dc=" + spDc,
-      Referer: ORIGIN + "/",
-      Origin: ORIGIN
-    },
-    cookies: false,
+    headers,
+    cookies: !spDc,  // sin sp_dc: usar jar de Kino para obtener token anónimo
     timeoutMs: 10000
   });
   if (!r.ok) return null;
   const d = r.json();
   const token = d.accessToken;
+  if (!token) return null;
   const exp = d.accessTokenExpirationTimestampMs || (Date.now() + 3600000);
-  if (token) {
-    try {
-      kino.storage.set("sp_token", JSON.stringify({ token, exp }), { ttlMs: exp - Date.now() - 30000 });
-    } catch (e) {}
+  try {
+    kino.storage.set(cacheKey, JSON.stringify({ token, exp }), { ttlMs: Math.max(60000, exp - Date.now() - 30000) });
+  } catch (e) {}
+  return token;
+}
+
+async function getAccessToken() {
+  const spDc = savedSpDc();
+  // Intentar con cuenta (sp_dc) primero; si falla o no hay, obtener token anónimo
+  if (spDc) {
+    const t = await fetchToken(spDc);
+    if (t) return t;
   }
-  return token || null;
+  // Token anónimo (Spotify lo entrega sin cookie; es limitado pero suficiente para catálogo público)
+  return fetchToken(null);
 }
 
 async function authHeaders() {
@@ -90,15 +107,16 @@ async function sp(path, opts) {
     timeoutMs: o.timeoutMs || 15000
   });
   if (r.status === 401) {
-    // token expirado: limpiar caché y reintentar una vez
+    // token expirado: limpiar ambas cachés y reintentar una vez
     try { kino.storage.remove("sp_token"); } catch (e) {}
+    try { kino.storage.remove("sp_anon_token"); } catch (e) {}
     const headers2 = Object.assign(
       { "User-Agent": WEB_UA, Accept: "application/json" },
       await authHeaders()
     );
     const r2 = await kino.fetch(url, { headers: headers2, cookies: false, timeoutMs: o.timeoutMs || 15000 });
     if (!r2.ok) throw kino.error("auth_required", "spotify " + path + " " + r2.status, {
-      userMessage: "La sesión de Spotify venció. Vuelve a copiar tu cookie sp_dc en Ajustes."
+      userMessage: "La sesión de Spotify venció. Vincula tu cuenta de nuevo."
     });
     return r2.json();
   }
@@ -568,6 +586,7 @@ export async function action(key) {
   await null;
   if (key !== "logout") return null;
   try { kino.storage.remove("sp_token"); } catch (e) {}
+  try { kino.storage.remove("sp_anon_token"); } catch (e) {}
   return { message: "Sesión cerrada", clearSettings: ["sp_dc"] };
 }
 
@@ -1130,7 +1149,7 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
       doneWhen: { cookies: ["sp_dc"] },
       collect: {
         cookies: ["sp_dc"],
-        storeAs: { setting: "sp_dc", format: "value", thenEvent: "account_linked" }
+        storeAs: { setting: "sp_dc", format: "header", thenEvent: "account_linked" }
       },
       timeoutMs: 600000
     });
@@ -1179,6 +1198,7 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
 
   if (name === "logout_session") {
     try { kino.storage.remove("sp_token"); } catch (e) {}
+    try { kino.storage.remove("sp_anon_token"); } catch (e) {}
     return { state: Object.assign({}, s, { libraryItems: [], linkedNow: false, sessionOff: true }), clearSettings: ["sp_dc"], toast: "Sesión cerrada" };
   }
 
