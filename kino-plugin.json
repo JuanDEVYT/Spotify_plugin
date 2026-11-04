@@ -1,0 +1,120 @@
+{
+  "id": "spotify",
+  "name": "Spotify",
+  "version": "0.1.0",
+  "apiVersion": 8,
+  "entry": "plugin.js",
+  "description": "Spotify con carruseles, búsqueda, Playlist IA y biblioteca personal.",
+  "author": "JuanDEVYT",
+  "creator": "JuandreXter",
+  "homepage": "https://github.com/JuanDEVYT/Spotify_plugin",
+  "hosts": [
+    "api.spotify.com",
+    "accounts.spotify.com",
+    "open.spotify.com",
+    "*.scdn.co",
+    "*.spotifycdn.com",
+    "audio-ak-spotify-com.akamaized.net",
+    "audio4-ak-spotify-com.akamaized.net"
+  ],
+  "capabilities": [
+    "search",
+    "home",
+    "browse",
+    "episodes",
+    "resolve",
+    "scopedSearch"
+  ],
+  "color": "#1DB954",
+  "icon": "icon.png",
+  "section": {
+    "label": "Spotify"
+  },
+  "theme": {
+    "accent": "#1DB954",
+    "onAccent": "#000000",
+    "background": "#121212",
+    "surface": "#1E1E1E",
+    "highlight": "#FFFFFF"
+  },
+  "debug": false,
+  "telemetry": true,
+  "settings": [
+    {
+      "key": "about",
+      "label": "Spotify",
+      "type": "section",
+      "hint": "Explorar, Tendencias, Búsqueda y Biblioteca; géneros en Categorías."
+    },
+    {
+      "key": "account",
+      "label": "Tu cuenta de Spotify",
+      "type": "section",
+      "hint": "Opcional. Sin sesión usas Spotify como invitado con contenido limitado."
+    },
+    {
+      "key": "sp_dc",
+      "label": "Cookie sp_dc",
+      "type": "password",
+      "hint": "Copia el valor de la cookie sp_dc de open.spotify.com"
+    },
+    {
+      "key": "linked",
+      "label": "Estado de la sesión",
+      "type": "status"
+    },
+    {
+      "key": "logout",
+      "label": "Cerrar sesión",
+      "type": "action",
+      "confirm": "¿Olvidar la cookie guardada en todos tus aparatos?"
+    },
+    {
+      "key": "content",
+      "label": "Contenido",
+      "type": "section"
+    },
+    {
+      "key": "hideExplicit",
+      "label": "Ocultar contenido explícito",
+      "type": "toggle",
+      "default": false,
+      "hint": "Quita canciones y álbumes marcados como explícitos"
+    }
+  ],
+  "browser": true,
+  "enhancements": {
+    "14": {
+      "capabilities": [
+        "screen",
+        "ai"
+      ],
+      "screen": {
+        "label": "Spotify",
+        "labelEn": "Spotify",
+        "icon": "music",
+        "menuOpens": "both",
+        "opensFrom": ["menu", "settings"],
+        "settingsButton": {
+          "label": "Abrir Spotify",
+          "labelEn": "Open Spotify"
+        }
+      },
+      "panel": {
+        "label": "Spotify",
+        "labelEn": "Spotify",
+        "icon": "music"
+      }
+    },
+    "19": {
+      "panel": {
+        "label": "Spotify",
+        "labelEn": "Spotify",
+        "icon": "music"
+      }
+    },
+    "20": {
+      "visualBrowser": true
+    }
+  }
+}
