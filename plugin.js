@@ -11,7 +11,7 @@ const TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&pr
 const ANON_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ORIGIN = "https://open.spotify.com";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 
 // ---------------------------------------------------------------------------------------------
 // Token de acceso (derivado de la cookie sp_dc, caduca ~1 hora)
@@ -20,12 +20,12 @@ const VERSION = "0.1.3";
 function savedSpDc() {
   const raw = String(kino.config.get("sp_dc") || "").trim();
   if (!raw) return "";
-  // Handle "Cookie: sp_dc=VALUE" or "sp_dc=VALUE" formats (visualBrowser header format)
-  const mHeader = /(?:^|[;\s])sp_dc=([^;\s]+)/.exec(raw);
-  if (mHeader) return mHeader[1];
-  // Handle raw value (manual paste or format: "value")
-  // A raw sp_dc value never contains "=" at the start and is typically 100-200 chars
-  if (!raw.includes("=") || raw.length > 50) return raw.split("=").pop().trim();
+  // format:"header" stores "sp_dc=VALUE" or "Cookie: sp_dc=VALUE; ..."
+  // Try to extract the value part
+  const mEq = /(?:^|[;\s])sp_dc=([^;\s]+)/.exec(raw);
+  if (mEq) return mEq[1];
+  // Manual paste: raw value with no "=" (pure token string)
+  if (!raw.includes("=")) return raw;
   return "";
 }
 
@@ -54,7 +54,7 @@ async function fetchToken(spDc) {
 
   const r = await kino.fetch(TOKEN_URL, {
     headers,
-    cookies: !spDc,  // sin sp_dc: usar jar de Kino para obtener token anónimo
+    cookies: false,  // nunca pasar el jar de Kino; Spotify rechaza cookies extrañas
     timeoutMs: 10000
   });
   if (!r.ok) return null;
@@ -249,30 +249,39 @@ export async function search(query) {
 }
 
 async function featuredRows() {
-  const { country, lang } = locale();
+  // browse/* endpoints requieren auth desde 2024; usamos search con géneros populares
+  const genres = [
+    { id: "pop", q: "genre:pop year:2024-2025", label: "Pop" },
+    { id: "reggaeton", q: "genre:reggaeton", label: "Reggaetón & Urbano" },
+    { id: "rock", q: "genre:rock", label: "Rock" },
+    { id: "electronica", q: "genre:electronic", label: "Electrónica" },
+    { id: "latin", q: "genre:latin", label: "Latin" }
+  ];
+  const { country } = locale();
   const rows = [];
 
-  const [featured, newReleases, categories] = await Promise.all([
-    safe("featured", () => sp("browse/featured-playlists?limit=20"), null),
-    safe("new_releases", () => sp("browse/new-releases?limit=20"), null),
-    safe("categories", () => sp("browse/categories?limit=10&locale=" + lang + "_" + country), null)
+  // Top charts — playlist global conocida, siempre accesible con token de usuario
+  const [global50, viral50] = await Promise.all([
+    safe("featured", () => sp("playlists/37i9dQZEVXbMDoHDwVN2tF"), null),
+    safe("new_releases", () => sp("playlists/37i9dQZEVXbLiRSasKsNU9"), null)
   ]);
+  if (global50 && global50.tracks) {
+    const items = (global50.tracks.items || []).map(x => x.track ? trackItem(x.track) : null).filter(Boolean).slice(0, 25);
+    if (items.length) rows.push({ id: "sp-global", title: "Global Top 50", items, genre: "musica" });
+  }
+  if (viral50 && viral50.tracks) {
+    const items = (viral50.tracks.items || []).map(x => x.track ? trackItem(x.track) : null).filter(Boolean).slice(0, 25);
+    if (items.length) rows.push({ id: "sp-viral", title: "Viral 50", items, genre: "musica" });
+  }
 
-  if (featured && featured.playlists) {
-    const items = (featured.playlists.items || []).map(playlistItem).filter(Boolean).slice(0, 25);
-    if (items.length) rows.push({ id: "sp-featured", title: featured.message || "Destacados", items, genre: "musica" });
-  }
-  if (newReleases && newReleases.albums) {
-    const items = (newReleases.albums.items || []).map(albumItem).filter(Boolean).slice(0, 25);
-    if (items.length) rows.push({ id: "sp-new", title: "Nuevos lanzamientos", items, genre: "musica" });
-  }
-  if (categories && categories.categories) {
-    for (const cat of (categories.categories.items || []).slice(0, 5)) {
-      const plData = await safe("cat_" + cat.id, () => sp("browse/categories/" + cat.id + "/playlists?limit=15"), null);
-      if (plData && plData.playlists) {
-        const items = (plData.playlists.items || []).map(playlistItem).filter(Boolean).slice(0, 15);
-        if (items.length) rows.push({ id: "sp-cat-" + cat.id, title: cat.name, items, genre: "musica" });
-      }
+  // Géneros vía search (funciona con cualquier token autenticado)
+  for (const g of genres) {
+    const data = await safe("categories", () => sp(
+      "search?q=" + encodeURIComponent(g.q) + "&type=track&limit=20&market=" + country, { noMarket: true }
+    ), null);
+    if (data && data.tracks) {
+      const items = (data.tracks.items || []).map(trackItem).filter(Boolean).slice(0, 20);
+      if (items.length) rows.push({ id: "sp-genre-" + g.id, title: g.label, items, genre: "musica" });
     }
   }
   return rows;
@@ -372,18 +381,40 @@ export async function section(arg) {
 }
 
 export async function categories() {
-  const { country, lang } = locale();
-  const data = await safe("cats", () => sp("browse/categories?limit=24&locale=" + lang + "_" + country), null);
-  if (!data || !data.categories) return [];
-  return (data.categories.items || []).slice(0, 24).map(c => ({
-    id: "c." + c.id,
-    title: c.name.slice(0, 40),
-    ref: "c:" + c.id,
-    poster: bigImage(c.icons)
+  // browse/categories fue deprecado en 2024; devolvemos géneros estáticos
+  const genres = [
+    { id: "pop", name: "Pop" },
+    { id: "reggaeton", name: "Reggaetón" },
+    { id: "rock", name: "Rock" },
+    { id: "hiphop", name: "Hip-Hop" },
+    { id: "electronic", name: "Electrónica" },
+    { id: "latin", name: "Latin" },
+    { id: "rnb", name: "R&B" },
+    { id: "indie", name: "Indie" },
+    { id: "metal", name: "Metal" },
+    { id: "jazz", name: "Jazz" },
+    { id: "classical", name: "Clásica" },
+    { id: "country", name: "Country" }
+  ];
+  return genres.map(g => ({
+    id: "g." + g.id,
+    title: g.name,
+    ref: "g:" + g.id,
+    poster: undefined
   }));
 }
 
 export async function browse(ref, cursor) {
+  // Handle genre ref "g:pop" → search
+  const gr = /^g:([A-Za-z0-9_-]+)$/.exec(String(ref || ""));
+  if (gr) {
+    const { country } = locale();
+    const data = await safe("genre_browse", () => sp(
+      "search?q=" + encodeURIComponent("genre:" + gr[1]) + "&type=track&limit=50&market=" + country, { noMarket: true }
+    ), null);
+    const items = data && data.tracks ? (data.tracks.items || []).map(trackItem).filter(Boolean) : [];
+    return { items };
+  }
   const p = parseRef(ref);
   if (!p) return { items: [] };
 
@@ -1172,7 +1203,7 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
       doneWhen: { cookies: ["sp_dc"] },
       collect: {
         cookies: ["sp_dc"],
-        storeAs: { setting: "sp_dc", format: "value", thenEvent: "account_linked" }
+        storeAs: { setting: "sp_dc", format: "header", thenEvent: "account_linked" }
       },
       timeoutMs: 600000
     });
