@@ -11,7 +11,7 @@ const TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&pr
 const ANON_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ORIGIN = "https://open.spotify.com";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
-const VERSION = "0.1.8-debug";
+const VERSION = "0.1.8";
 
 // Flag en memoria: evita que requests paralelos intenten fetchToken() cuando ya sabemos que falla
 let _tokenFailed = false;
