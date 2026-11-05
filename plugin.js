@@ -1248,7 +1248,7 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
       doneWhen: { cookies: ["sp_dc"] },
       collect: {
         cookies: ["sp_dc"],
-        storeAs: { setting: "sp_dc", format: "value", thenEvent: "account_linked" }
+        storeAs: { setting: "sp_dc", format: "header", thenEvent: "account_linked" }
       },
       timeoutMs: 600000
     });
