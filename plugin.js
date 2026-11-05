@@ -93,9 +93,9 @@ async function fetchToken(spDc) {
 
   kino.log("fetchToken: HTTP " + r.status);
   if (!r.ok) {
+    // Solo invalidar en memoria; no borrar sp_dc del config (podría haberse actualizado)
     kino.log("sp_dc inválida o expirada (HTTP " + r.status + "), cerrando sesión");
     _tokenFailed = true; _tokenFailedAt = Date.now();
-    try { kino.config.set("sp_dc", ""); } catch (e) {}
     try { kino.storage.remove("sp_token"); } catch (e) {}
     return null;
   }
@@ -104,7 +104,6 @@ async function fetchToken(spDc) {
   if (!d.accessToken || d.isAnonymous) {
     kino.log("sp_dc sin sesión activa, cerrando sesión");
     _tokenFailed = true; _tokenFailedAt = Date.now();
-    try { kino.config.set("sp_dc", ""); } catch (e) {}
     try { kino.storage.remove("sp_token"); } catch (e) {}
     return null;
   }
@@ -1249,7 +1248,7 @@ export async function screenEvent({ name, arg, value, state, route, device, lang
       doneWhen: { cookies: ["sp_dc"] },
       collect: {
         cookies: ["sp_dc"],
-        storeAs: { setting: "sp_dc", format: "header", thenEvent: "account_linked" }
+        storeAs: { setting: "sp_dc", format: "value", thenEvent: "account_linked" }
       },
       timeoutMs: 600000
     });
