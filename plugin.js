@@ -10,8 +10,8 @@ const API = "https://api.spotify.com/v1/";
 const TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ANON_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
 const ORIGIN = "https://open.spotify.com";
-const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
-const VERSION = "0.1.9";
+const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const VERSION = "0.2.0";
 
 // Flag en memoria: evita que requests paralelos intenten fetchToken() cuando ya sabemos que falla
 let _tokenFailed = false;
@@ -75,10 +75,17 @@ async function fetchToken(spDc) {
 
   const headers = {
     "User-Agent": WEB_UA,
-    Referer: ORIGIN + "/",
-    Origin: ORIGIN,
-    Accept: "application/json",
-    Cookie: "sp_dc=" + spDc
+    "Referer": ORIGIN + "/",
+    "Origin": ORIGIN,
+    "Accept": "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "Cookie": "sp_dc=" + spDc
   };
 
   kino.log("fetchToken: enviando Cookie sp_dc=" + spDc.slice(0, 20) + "... len=" + spDc.length);
@@ -689,7 +696,20 @@ export async function validateSettings(values) {
   // Forzar renovación de token con la cookie nueva
   try { kino.storage.remove("sp_token"); } catch (e) {}
   const r = await kino.fetch(TOKEN_URL, {
-    headers: { "User-Agent": WEB_UA, Cookie: "sp_dc=" + spDc, Referer: ORIGIN + "/", Origin: ORIGIN },
+    headers: {
+      "User-Agent": WEB_UA,
+      "Referer": ORIGIN + "/",
+      "Origin": ORIGIN,
+      "Accept": "application/json",
+      "Accept-Language": "en-US,en;q=0.9",
+      "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "Cookie": "sp_dc=" + spDc
+    },
     cookies: false,
     timeoutMs: 10000
   });
