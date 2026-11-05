@@ -1,7 +1,7 @@
 {
   "id": "spotify",
   "name": "Spotify",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "apiVersion": 8,
   "entry": "plugin.js",
   "description": "Spotify con carruseles, búsqueda, Playlist IA y biblioteca personal.",
